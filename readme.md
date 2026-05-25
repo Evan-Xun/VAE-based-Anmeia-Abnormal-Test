@@ -1,137 +1,225 @@
-# Variational autoencoder for anomaly detection
+# VAE-based Anemia Abnormal Detection
 
-![PyPI](https://img.shields.io/pypi/v/vae-anomaly-detection?style=flat-square)
-![PyPI - Python Version](https://img.shields.io/pypi/pyversions/vae-anomaly-detection?style=flat-square)
-![PyPI - License](https://img.shields.io/pypi/l/vae-anomaly-detection?style=flat-square)
-![PyPI - Downloads](https://img.shields.io/pypi/dm/vae-anomaly-detection?style=flat-square)
+This project implements a Variational Autoencoder (VAE) baseline for
+unsupervised multivariate anomaly detection on anemia-related Complete Blood
+Count (CBC) indicators.
 
-Pytorch/TF1 implementation of Variational AutoEncoder for anomaly detection following the paper
- [Variational Autoencoder based Anomaly Detection using Reconstruction Probability by Jinwon An, Sungzoon Cho](https://www.semanticscholar.org/paper/Variational-Autoencoder-based-Anomaly-Detection-An-Cho/061146b1d7938d7a8dae70e3531a00fceb3c78e8)
- <br>
+The current implementation follows the Session 6 task brief:
 
-## How to install
+- Train the VAE only on normal samples (`Result = 0`).
+- Use four CBC indicators as model inputs.
+- Use the `Result` label only for evaluation, not for training.
+- Compute anomaly scores from reconstruction error and latent distance.
+- Evaluate with AUROC, precision, recall, and F1-score.
+- Generate the required visualisations for presentation.
 
-#### Python package way
- _pip_ package containing the model and training_step only 
-   
-    pip install vae-anomaly-detection
+## Dataset
 
+The dataset file is:
 
-#### Hack this repository
-
-
-   a. Clone the repo
-
-    git clone git@github.com:Michedev/VAE_anomaly_detection.git
-
-   b. Install hatch
-
-    pip install hatch
-
-   c. Make the environment with torch gpu support
-
-    hatch env create
-      
-or with cpu support
-
-    hatch env create cpu
-
-   d. Run the train
-
-    hatch run train
-
-or in cpu
-          
-    hatch run cpu:train
-
-   To know all the train parameters run `hatch run train --help`
-
-
-
-
-This version contains the model and the training procedure
-
-## How To Train your Model
-
-- Define your dataset into dataset.py and overwrite the line `train_set = rand_dataset()  # set here your dataset` in `train.py`
-- Subclass VAEAnomalyDetection and define the methods `make_encoder` and `make_decoder`. The output of `make_encoder` should be a flat vector while the output of `make_decoder should have the same shape of the input.
-## Make your model
-
-Subclass ```VAEAnomalyDetection``` and define your encoder and decoder like in ```VaeAnomalyTabular```
-
-```python
-class VAEAnomalyTabular(VAEAnomalyDetection):
-
-    def make_encoder(self, input_size, latent_size):
-        """
-        Simple encoder for tabular data.
-        If you want to feed image to a VAE make another encoder function with Conv2d instead of Linear layers.
-        :param input_size: number of input variables
-        :param latent_size: number of output variables i.e. the size of the latent space since it's the encoder of a VAE
-        :return: The untrained encoder model
-        """
-        return nn.Sequential(
-            nn.Linear(input_size, 500),
-            nn.ReLU(),
-            nn.Linear(500, 200),
-            nn.ReLU(),
-            nn.Linear(200, latent_size * 2)
-            # times 2 because this is the concatenated vector of latent mean and variance
-        )
-
-    def make_decoder(self, latent_size, output_size):
-        """
-        Simple decoder for tabular data.
-        :param latent_size: size of input latent space
-        :param output_size: number of output parameters. Must have the same value of input_size
-        :return: the untrained decoder
-        """
-        return nn.Sequential(
-            nn.Linear(latent_size, 200),
-            nn.ReLU(),
-            nn.Linear(200, 500),
-            nn.ReLU(),
-            nn.Linear(500, output_size * 2)  # times 2 because this is the concatenated vector of reconstructed mean and variance
-        )
+```text
+anemia.csv
 ```
 
-## How to make predictions:
-Once the model is trained (suppose for simplicity that it is under _saved_models/{train-datetime}/_ ) just load and predict with this code snippet:
-```python
-import torch
+It contains 1,421 samples with the following columns:
 
-#load X_test
-model = VaeAnomalyTabular.load_checkpoint('saved_models/2022-01-06_15-12-23/last.ckpt')
-# load saved parameters from a run
-outliers = model.is_anomaly(X_test)
+| Column | Usage |
+| --- | --- |
+| `Gender` | Available in the dataset, not used in the current VAE baseline |
+| `Hemoglobin` | Input feature |
+| `MCH` | Input feature |
+| `MCHC` | Input feature |
+| `MCV` | Input feature |
+| `Result` | Evaluation label only; `0 = normal`, `1 = anemia` |
+
+Current label distribution:
+
+```text
+Normal samples (Result = 0): 801
+Anemia samples (Result = 1): 620
+Total samples: 1421
 ```
 
+The VAE is trained only on normal samples after an 80/20 stratified split.
+The four input features are standardised with `StandardScaler`.
 
-## train.py help
+## Method
 
-        usage: train.py [-h] --input-size INPUT_SIZE --latent-size LATENT_SIZE
-                        [--num-resamples NUM_RESAMPLES] [--epochs EPOCHS] [--batch-size BATCH_SIZE]
-                        [--device {cpu,gpu,tpu}] [--lr LR] [--no-progress-bar]
-                        [--steps-log-loss STEPS_LOG_LOSS]
-                        [--steps-log-norm-params STEPS_LOG_NORM_PARAMS]
+The model is a small fully connected VAE designed for four tabular features.
 
-        options:
-        -h, --help            show this help message and exit
-        --input-size INPUT_SIZE, -i INPUT_SIZE
-                                Number of input features. In 1D case it is the vector length, in 2D
-                                case it is the number of channels
-        --latent-size LATENT_SIZE, -l LATENT_SIZE
-                                Size of the latent space
-        --num-resamples NUM_RESAMPLES, -L NUM_RESAMPLES
-                                Number of resamples in the latent distribution during training
-        --epochs EPOCHS, -e EPOCHS
-                                Number of epochs to train for
-        --batch-size BATCH_SIZE, -b BATCH_SIZE
-        --device {cpu,gpu,tpu}, -d {cpu,gpu,tpu}, --accelerator {cpu,gpu,tpu}
-                                Device to use for training. Can be cpu, gpu or tpu
-        --lr LR               Learning rate
-        --no-progress-bar
-        --steps-log-loss STEPS_LOG_LOSS
-                                Number of steps between each loss logging
-        --steps-log-norm-params STEPS_LOG_NORM_PARAMS
-                                Number of steps between each model parameters logging
+Encoder:
+
+```text
+Input(4) -> Linear(4, 16) -> ReLU -> Linear(16, 8) -> ReLU
+```
+
+The encoder outputs:
+
+```text
+mu, log_var
+```
+
+Decoder:
+
+```text
+Latent(2) -> Linear(2, 8) -> ReLU -> Linear(8, 16) -> ReLU -> Linear(16, 4)
+```
+
+Training loss:
+
+```text
+total_loss = reconstruction_loss + kl_loss
+```
+
+Anomaly score:
+
+```text
+reconstruction_error = MSE(x, x_hat)
+latent_dist = 0.5 * mean(mu^2)
+anomaly_score = reconstruction_error + latent_dist
+```
+
+Higher anomaly scores indicate samples that deviate more from the normal CBC
+patterns learned by the VAE.
+
+## Current Results
+
+The current baseline was trained for 100 epochs with:
+
+```text
+latent_dim = 2
+batch_size = 32
+learning_rate = 0.001
+seed = 42
+```
+
+Evaluation on the held-out test set:
+
+```text
+AUROC: 0.9188
+AUPRC: 0.9249
+Accuracy: 0.8526
+Precision: 0.9184
+Recall: 0.7258
+F1-score: 0.8108
+```
+
+Confusion matrix:
+
+```text
+              Predicted Normal   Predicted Anemia
+Actual Normal              153                  8
+Actual Anemia               34                 90
+```
+
+The current threshold is based on the 95th percentile of training normal
+anomaly scores. This gives high precision and low false positives, but recall
+is moderate. For screening-oriented use, a lower threshold may be preferred.
+
+Using a Youden-style threshold during analysis gave:
+
+```text
+Precision: 0.8607
+Recall: 0.8468
+F1-score: 0.8537
+```
+
+## Generated Outputs
+
+Model and evaluation files:
+
+```text
+results/vae_anemia.pt
+results/evaluation_outputs.npz
+results/training_history.npy
+```
+
+Required plots:
+
+```text
+results/plots/training_loss_curve.png
+results/plots/anomaly_score_distribution.png
+results/plots/roc_curve.png
+results/plots/latent_space_scatter.png
+results/plots/reconstruction_examples.png
+```
+
+Plot meanings:
+
+- `training_loss_curve.png`: shows total loss, reconstruction loss, and KL loss
+  across epochs to confirm training convergence.
+- `anomaly_score_distribution.png`: compares anomaly score distributions for
+  normal and anemia samples. Anemia samples should generally shift to higher
+  scores.
+- `roc_curve.png`: shows the model's ability to separate normal and anemia
+  samples across thresholds. The current AUROC is 0.9188.
+- `latent_space_scatter.png`: visualises the 2D latent mean values
+  `(mu_1, mu_2)` coloured by label.
+- `reconstruction_examples.png`: compares original and reconstructed CBC values
+  for selected normal and anemia records.
+
+## How to Run
+
+Activate the project virtual environment:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+Train the VAE:
+
+```powershell
+python src\train.py --epochs 100 --device cuda
+```
+
+Evaluate the trained model:
+
+```powershell
+python src\evaluate.py --device cuda
+```
+
+Generate the five required plots:
+
+```powershell
+python src\visualise.py --device cuda
+```
+
+If CUDA is unavailable, replace `cuda` with `cpu`.
+
+## Project Structure
+
+```text
+src/dataset.py      Data loading, train/test split, and feature scaling
+src/model.py        VAE model, loss function, and anomaly score calculation
+src/train.py        Training loop and checkpoint saving
+src/evaluate.py     AUROC, precision, recall, F1, and saved evaluation outputs
+src/visualise.py    Required Session 6 plots
+```
+
+## Current Limitation
+
+The main issue observed so far is KL collapse:
+
+```text
+KL loss becomes almost zero during training.
+```
+
+This suggests that the latent space is not being used strongly, and the model
+may behave more like a standard autoencoder. The next improvement should focus
+on KL weighting, such as beta-VAE or KL annealing:
+
+```text
+loss = reconstruction_loss + beta * kl_loss
+```
+
+Candidate experiments:
+
+```text
+beta = 1.0
+beta = 0.1
+beta = 0.05
+beta = 0.01
+```
+
+The goal is to check whether a better KL balance improves latent space
+separation, recall, and overall anomaly detection performance.
