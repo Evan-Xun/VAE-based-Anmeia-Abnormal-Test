@@ -4,10 +4,20 @@ import torch
 from torch import nn
 from torch.distributions import Normal, kl_divergence
 from torch.nn.functional import softplus
-import pytorch_lightning as pl
 
 
-class VAEAnomalyDetection(pl.LightningModule, ABC):
+class _LightningModuleFallback(nn.Module):
+    """Minimal replacement used when PyTorch Lightning is not installed."""
+
+    @property
+    def global_step(self):
+        return 0
+
+    def log(self, *args, **kwargs):
+        return None
+
+
+class VAEAnomalyDetection(_LightningModuleFallback, ABC):
     """
     Variational Autoencoder (VAE) for anomaly detection. The model learns a low-dimensional representation of the input
     data using an encoder-decoder architecture, and uses the learned representation to detect anomalies.

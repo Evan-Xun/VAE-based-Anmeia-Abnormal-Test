@@ -3,13 +3,18 @@
 from argparse import ArgumentParser
 from pathlib import Path
 import random
+from typing import Dict, List
 
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from dataset import load_anemia_data
-from model import VAE, anomaly_scores, vae_loss
+from data_cleaning import report_to_dict
+from dataset import DEFAULT_DATA_PATH, load_anemia_data
+from model import VAE, vae_loss
+
+
+DEFAULT_THRESHOLD = 0.97
 
 
 def set_seed(seed: int) -> None:
@@ -19,14 +24,14 @@ def set_seed(seed: int) -> None:
     torch.manual_seed(seed)
 
 
-def train(args) -> dict[str, list[float]]:
+def train(args) -> Dict[str, List[float]]:
     """Train the VAE and save model artifacts."""
     set_seed(args.seed)
-    data = load_anemia_data(args.data, seed=args.seed)
+    data = load_anemia_data(args.data, seed=args.seed, clean_data=not args.no_cleaning, target=args.target)
     loader = DataLoader(data.train_dataset, batch_size=args.batch_size, shuffle=True)
 
     device = torch.device("cuda" if args.device == "cuda" and torch.cuda.is_available() else "cpu")
-    model = VAE(input_dim=4, latent_dim=args.latent_dim).to(device)
+    model = VAE(input_dim=len(data.feature_columns), latent_dim=args.latent_dim).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
     history = {"total": [], "recon": [], "kl": []}
@@ -63,8 +68,16 @@ def train(args) -> dict[str, list[float]]:
             )
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    train_scores, _, _ = anomaly_scores(model, data.train_x.to(device))
-    threshold = float(torch.quantile(train_scores.cpu(), 0.95))
+    if not data.cleaning_report.empty:
+        data.cleaning_report.to_csv(args.output_dir / "data_cleaning_report.csv", index=False)
+        summary = report_to_dict(data.cleaning_report)
+        print(
+            "Data cleaning: "
+            f"{summary['original_rows']} rows -> {summary['rows_after_cleaning']} rows "
+            f"({summary['dropped_rows']} dropped)"
+        )
+
+    threshold = float(args.threshold)
 
     torch.save(
         {
@@ -75,18 +88,24 @@ def train(args) -> dict[str, list[float]]:
             "threshold": threshold,
             "history": history,
             "latent_dim": args.latent_dim,
+            "input_dim": len(data.feature_columns),
+            "label_column": data.label_column,
+            "clean_data": not args.no_cleaning,
+            "target": data.target,
+            "positive_label": data.positive_label,
+            "threshold_method": "fixed",
         },
         args.output_dir / "vae_anemia.pt",
     )
     np.save(args.output_dir / "training_history.npy", history)
     print(f"Saved model to {args.output_dir / 'vae_anemia.pt'}")
-    print(f"95th percentile training threshold: {threshold:.4f}")
+    print(f"Fixed anomaly threshold: {threshold:.4f}")
     return history
 
 
 def parse_args():
     parser = ArgumentParser()
-    parser.add_argument("--data", type=Path, default=Path("anemia.csv"))
+    parser.add_argument("--data", type=Path, default=DEFAULT_DATA_PATH)
     parser.add_argument("--output-dir", type=Path, default=Path("results"))
     parser.add_argument("--latent-dim", type=int, default=2)
     parser.add_argument("--epochs", type=int, default=100)
@@ -94,6 +113,9 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", choices=["cpu", "cuda"], default="cuda")
+    parser.add_argument("--no-cleaning", action="store_true", help="Disable CBC value-range data cleaning.")
+    parser.add_argument("--target", choices=["anemia", "abnormal"], default="anemia")
+    parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
     return parser.parse_args()
 
 

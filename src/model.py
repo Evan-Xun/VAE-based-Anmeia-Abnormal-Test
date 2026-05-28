@@ -1,8 +1,9 @@
-"""Small fully-connected VAE for four CBC anemia indicators."""
+"""Small fully-connected VAE for tabular CBC indicators."""
 
 import torch
 from torch import nn
 from torch.nn import functional as F
+from typing import Tuple
 
 
 class VAE(nn.Module):
@@ -27,7 +28,7 @@ class VAE(nn.Module):
             nn.Linear(16, input_dim),
         )
 
-    def encode(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def encode(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """Encode inputs into latent mean and log variance."""
         hidden = self.encoder(x)
         return self.fc_mu(hidden), self.fc_log_var(hidden)
@@ -42,7 +43,7 @@ class VAE(nn.Module):
         """Decode latent vectors back to CBC feature space."""
         return self.decoder(z)
 
-    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Return reconstructed input, latent mean, and latent log variance."""
         mu, log_var = self.encode(x)
         z = self.reparameterize(mu, log_var)
@@ -55,7 +56,7 @@ def vae_loss(
     x_hat: torch.Tensor,
     mu: torch.Tensor,
     log_var: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Compute total VAE loss, reconstruction loss, and KL loss."""
     recon_loss = F.mse_loss(x_hat, x, reduction="mean")
     kl_loss = -0.5 * torch.mean(torch.sum(1 + log_var - mu.pow(2) - log_var.exp(), dim=1))
@@ -64,7 +65,7 @@ def vae_loss(
 
 
 @torch.no_grad()
-def anomaly_scores(model: VAE, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+def anomaly_scores(model: VAE, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Compute score = reconstruction error + latent distance for each sample."""
     model.eval()
     mu, log_var = model.encode(x)

@@ -9,7 +9,7 @@ import pandas as pd
 import torch
 from sklearn.metrics import roc_auc_score
 
-from dataset import FEATURE_COLUMNS, load_anemia_data
+from dataset import DEFAULT_DATA_PATH, load_anemia_data
 from evaluate import load_model
 from model import anomaly_scores
 
@@ -30,14 +30,33 @@ def save_training_loss(history: dict, output_dir: Path) -> None:
     plt.close()
 
 
-def save_score_distribution(y_true: np.ndarray, scores: np.ndarray, output_dir: Path) -> None:
+def save_score_distribution(y_true: np.ndarray, scores: np.ndarray, output_dir: Path, positive_label: str) -> None:
     """Plot anomaly score histograms for normal and anemia samples."""
+    healthy_scores = scores[y_true == 0]
+    abnormal_scores = scores[y_true == 1]
     plt.figure(figsize=(8, 5))
-    plt.hist(scores[y_true == 0], bins=30, alpha=0.7, label="Normal")
-    plt.hist(scores[y_true == 1], bins=30, alpha=0.7, label="Anemia")
+    plot_max = float(np.percentile(scores, 99))
+    bins = np.linspace(float(scores.min()), plot_max, 31)
+    plt.hist(
+        abnormal_scores[abnormal_scores <= plot_max],
+        bins=bins,
+        histtype="step",
+        linewidth=2.2,
+        label=f"{positive_label} (n={len(abnormal_scores)})",
+        color="tab:orange",
+    )
+    plt.hist(
+        healthy_scores[healthy_scores <= plot_max],
+        bins=bins,
+        histtype="step",
+        linewidth=2.2,
+        label=f"Healthy (n={len(healthy_scores)})",
+        color="tab:blue",
+    )
+    clipped_count = int((scores > plot_max).sum())
     plt.xlabel("Anomaly score")
     plt.ylabel("Count")
-    plt.title("Anomaly Score Distribution")
+    plt.title(f"Anomaly Score Distribution (99th percentile view, {clipped_count} hidden)")
     plt.legend()
     plt.tight_layout()
     plt.savefig(output_dir / "anomaly_score_distribution.png", dpi=200)
@@ -59,15 +78,24 @@ def save_roc_curve(y_true: np.ndarray, scores: np.ndarray, results: np.lib.npyio
     plt.close()
 
 
-def save_latent_scatter(model, test_x: torch.Tensor, y_true: np.ndarray, output_dir: Path, device: torch.device) -> None:
+def save_latent_scatter(
+    model,
+    test_x: torch.Tensor,
+    y_true: np.ndarray,
+    output_dir: Path,
+    device: torch.device,
+    positive_label: str,
+) -> None:
     """Plot the 2D latent mean space colored by label."""
     with torch.no_grad():
         mu, _ = model.encode(test_x.to(device))
     mu_np = mu.cpu().numpy()
 
     plt.figure(figsize=(7, 6))
-    plt.scatter(mu_np[y_true == 0, 0], mu_np[y_true == 0, 1], s=18, alpha=0.75, label="Normal")
-    plt.scatter(mu_np[y_true == 1, 0], mu_np[y_true == 1, 1], s=18, alpha=0.75, label="Anemia")
+    healthy_count = int((y_true == 0).sum())
+    abnormal_count = int((y_true == 1).sum())
+    plt.scatter(mu_np[y_true == 0, 0], mu_np[y_true == 0, 1], s=18, alpha=0.75, label=f"Healthy (n={healthy_count})")
+    plt.scatter(mu_np[y_true == 1, 0], mu_np[y_true == 1, 1], s=18, alpha=0.75, label=f"{positive_label} (n={abnormal_count})")
     plt.xlabel("Latent dimension 1")
     plt.ylabel("Latent dimension 2")
     plt.title("Latent Space Scatter")
@@ -91,9 +119,10 @@ def save_reconstruction_examples(model, data, y_true: np.ndarray, output_dir: Pa
     reconstructed = data.scaler.inverse_transform(recon_scaled)
 
     rows = []
-    labels = ["Normal"] * len(normal_idx) + ["Anemia"] * len(anemia_idx)
+    positive_label = getattr(data, "positive_label", "Abnormal")
+    labels = ["Healthy"] * len(normal_idx) + [positive_label] * len(anemia_idx)
     for i, label in enumerate(labels):
-        for j, feature in enumerate(FEATURE_COLUMNS):
+        for j, feature in enumerate(data.feature_columns):
             rows.append(
                 {
                     "Sample": f"{label} {i % 3 + 1}",
@@ -114,7 +143,8 @@ def save_reconstruction_examples(model, data, y_true: np.ndarray, output_dir: Pa
         for _, row in table_df.iterrows()
     ]
 
-    plt.figure(figsize=(8, 7))
+    figure_height = max(7, 0.28 * len(pivot_text) + 1.5)
+    plt.figure(figsize=(9, figure_height))
     plt.axis("off")
     table = plt.table(
         cellText=pivot_text,
@@ -136,16 +166,28 @@ def create_plots(args) -> None:
     device = torch.device("cuda" if args.device == "cuda" and torch.cuda.is_available() else "cpu")
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    data = load_anemia_data(args.data, seed=args.seed)
+    data = load_anemia_data(args.data, seed=args.seed, clean_data=not args.no_cleaning, target=args.target)
     model, checkpoint = load_model(args.model, device)
+    if checkpoint.get("feature_columns") != data.feature_columns:
+        raise ValueError(
+            "The model was trained with different feature columns than the current dataset. "
+            "Retrain the model or pass the matching --data file."
+        )
+    if checkpoint.get("target", data.target) != data.target:
+        raise ValueError("The model target does not match the current --target setting.")
     outputs = np.load(args.outputs)
     y_true = outputs["y_true"]
     scores = outputs["scores"]
+    if len(data.test_x) != len(y_true):
+        raise ValueError(
+            "The evaluation outputs do not match the current data cleaning setting. "
+            "Run evaluation again with the same --data and cleaning options."
+        )
 
     save_training_loss(checkpoint["history"], args.output_dir)
-    save_score_distribution(y_true, scores, args.output_dir)
+    save_score_distribution(y_true, scores, args.output_dir, data.positive_label)
     save_roc_curve(y_true, scores, outputs, args.output_dir)
-    save_latent_scatter(model, data.test_x, y_true, args.output_dir, device)
+    save_latent_scatter(model, data.test_x, y_true, args.output_dir, device, data.positive_label)
     save_reconstruction_examples(model, data, y_true, args.output_dir, device)
 
     print(f"Saved plots to {args.output_dir}")
@@ -153,12 +195,14 @@ def create_plots(args) -> None:
 
 def parse_args():
     parser = ArgumentParser()
-    parser.add_argument("--data", type=Path, default=Path("anemia.csv"))
+    parser.add_argument("--data", type=Path, default=DEFAULT_DATA_PATH)
     parser.add_argument("--model", type=Path, default=Path("results/vae_anemia.pt"))
     parser.add_argument("--outputs", type=Path, default=Path("results/evaluation_outputs.npz"))
     parser.add_argument("--output-dir", type=Path, default=Path("results/plots"))
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", choices=["cpu", "cuda"], default="cuda")
+    parser.add_argument("--no-cleaning", action="store_true", help="Disable CBC value-range data cleaning.")
+    parser.add_argument("--target", choices=["anemia", "abnormal"], default="anemia")
     return parser.parse_args()
 
 

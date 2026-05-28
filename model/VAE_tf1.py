@@ -2,10 +2,27 @@
 
 
 from math import ceil
+from importlib import import_module
 
 import numpy as np
-import tensorflow as tf
 from scipy.stats import multivariate_normal
+
+
+tf = None
+
+
+def _require_tensorflow():
+    global tf
+    if tf is None:
+        try:
+            tf = import_module("tensorflow")
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "The legacy TensorFlow VAE requires tensorflow, but the current CBC "
+                "PyTorch workflow does not. Install tensorflow only if you need "
+                "model/VAE_tf1.py."
+            ) from exc
+    return tf
 
 
 def tf_namespace(namespace):
@@ -23,6 +40,7 @@ class VAE:
 
     def __init__(self, input_shape, encode_sizes, latent_size, decode_sizes=None, mu_prior=None, sigma_prior=None,
                  lr=10e-4,  momentum=0.9, save_model=True):
+        _require_tensorflow()
         self.encode_sizes = encode_sizes
         self.latent_size = latent_size
         self.decode_sizes = decode_sizes or encode_sizes[::-1]

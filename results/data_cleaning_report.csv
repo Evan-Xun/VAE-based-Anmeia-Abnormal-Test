@@ -1,0 +1,11 @@
+column,metric,value,min_allowed,max_allowed,missing_count,non_numeric_count,out_of_range_count
+__summary__,original_rows,1421.0,,,,,
+__summary__,rows_after_cleaning,534.0,,,,,
+__summary__,dropped_rows,887.0,,,,,
+__summary__,missing_or_non_numeric_rows,0.0,,,,,
+__summary__,out_of_range_rows,0.0,,,,,
+__summary__,duplicate_rows,887.0,,,,,
+Hemoglobin,,,1.0,25.0,0.0,0.0,0.0
+MCH,,,10.0,60.0,0.0,0.0,0.0
+MCHC,,,15.0,45.0,0.0,0.0,0.0
+MCV,,,40.0,150.0,0.0,0.0,0.0
