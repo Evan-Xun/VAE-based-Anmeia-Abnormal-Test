@@ -1,0 +1,32 @@
+
+name: Python release on pypi
+
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+
+
+jobs:
+  build:
+
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v3
+        with:
+          python-version: "3.10"
+      - name: Assemble python package folder
+        run: |
+            mv model/ vae_anomaly_detection/
+      - name: Install pypa/hatch
+        run: pip install hatch
+      - name: Build a binary wheel and a source tarball
+        run: hatch build
+      - name: Publish distribution 📦 to PyPI
+        run: hatch publish
+        env:
+          HATCH_INDEX_USER: __token__
+          HATCH_INDEX_AUTH: ${{ secrets.PYPI_PASSWORD }}
