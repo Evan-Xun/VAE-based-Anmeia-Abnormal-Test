@@ -1,6 +1,7 @@
 envs/
 .vscode/
 .idea
+.DS_Store
 dist/
 poetry.lock
 results/

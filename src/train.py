@@ -10,7 +10,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from data_cleaning import report_to_dict
-from dataset import DEFAULT_DATA_PATH, load_anemia_data
+from dataset import DEFAULT_DATA_PATH, load_anemia_baseline_split
 from model import VAE, vae_loss
 
 
@@ -34,7 +34,14 @@ def kl_weight_for_epoch(epoch: int, beta: float, warmup_epochs: int) -> float:
 def train(args) -> Dict[str, List[float]]:
     """Train the VAE and save model artifacts."""
     set_seed(args.seed)
-    data = load_anemia_data(args.data, seed=args.seed, clean_data=not args.no_cleaning, target=args.target)
+    data = load_anemia_baseline_split(
+        args.data,
+        seed=args.seed,
+        clean_data=not args.no_cleaning,
+        target=args.target,
+        test_size=args.test_size,
+        val_size=args.val_size,
+    )
     loader = DataLoader(data.train_dataset, batch_size=args.batch_size, shuffle=True)
 
     device = torch.device("cuda" if args.device == "cuda" and torch.cuda.is_available() else "cpu")
@@ -106,6 +113,8 @@ def train(args) -> Dict[str, List[float]]:
             "threshold_method": "fixed",
             "beta": args.beta,
             "kl_warmup_epochs": args.kl_warmup_epochs,
+            "test_size": args.test_size,
+            "val_size": args.val_size,
         },
         args.output_dir / "vae_anemia.pt",
     )
@@ -135,6 +144,8 @@ def parse_args():
     parser.add_argument("--no-cleaning", action="store_true", help="Disable CBC value-range data cleaning.")
     parser.add_argument("--target", choices=["anemia", "abnormal"], default="anemia")
     parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
+    parser.add_argument("--test-size", type=float, default=0.2)
+    parser.add_argument("--val-size", type=float, default=0.2)
     return parser.parse_args()
 
 

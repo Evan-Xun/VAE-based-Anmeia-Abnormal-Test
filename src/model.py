@@ -70,6 +70,28 @@ class VAE(nn.Module):
         return x_hat, mu, log_var
 
 
+class SemiSupervisedVAE(VAE):
+    """VAE with an end-to-end classifier head on the latent representation."""
+
+    def __init__(self, input_dim: int = 4, latent_dim: int = 2):
+        super().__init__(input_dim=input_dim, latent_dim=latent_dim)
+        self.classifier = nn.Sequential(
+            nn.Linear(latent_dim, max(8, latent_dim * 2)),
+            nn.ReLU(),
+            nn.Linear(max(8, latent_dim * 2), 1),
+        )
+
+    def classify(self, mu: torch.Tensor) -> torch.Tensor:
+        """Return logits for the positive class from latent means."""
+        return self.classifier(mu).squeeze(-1)
+
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Return reconstruction, latent stats, and classifier logits."""
+        x_hat, mu, log_var = super().forward(x)
+        logits = self.classify(mu)
+        return x_hat, mu, log_var, logits
+
+
 def vae_loss(
     x: torch.Tensor,
     x_hat: torch.Tensor,
@@ -82,6 +104,23 @@ def vae_loss(
     kl_loss = torch.mean(latent_kl_divergence(mu, log_var, reduction="sum"))
     total_loss = recon_loss + kl_weight * kl_loss
     return total_loss, recon_loss, kl_loss
+
+
+def semi_supervised_vae_loss(
+    x: torch.Tensor,
+    x_hat: torch.Tensor,
+    mu: torch.Tensor,
+    log_var: torch.Tensor,
+    logits: torch.Tensor,
+    y: torch.Tensor,
+    kl_weight: float = 1.0,
+    classification_weight: float = 1.0,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Combine reconstruction, KL, and classification losses."""
+    vae_total, recon_loss, kl_loss = vae_loss(x, x_hat, mu, log_var, kl_weight=kl_weight)
+    classification_loss = F.binary_cross_entropy_with_logits(logits, y.float())
+    total_loss = vae_total + classification_weight * classification_loss
+    return total_loss, recon_loss, kl_loss, classification_loss
 
 
 def latent_kl_divergence(mu: torch.Tensor, log_var: torch.Tensor, reduction: str = "mean") -> torch.Tensor:

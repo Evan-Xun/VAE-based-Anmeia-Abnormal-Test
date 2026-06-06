@@ -9,8 +9,8 @@ import pandas as pd
 import torch
 from sklearn.metrics import f1_score, precision_score, recall_score, roc_curve
 
-from dataset import DEFAULT_DATA_PATH, load_anemia_data
-from evaluate import load_model
+from dataset import DEFAULT_DATA_PATH, load_anemia_baseline_split
+from evaluate import load_model, validation_threshold
 from model import anomaly_scores
 
 
@@ -28,7 +28,14 @@ def metric_row(name: str, threshold: float, y_true: np.ndarray, scores: np.ndarr
 
 def threshold_sweep(args) -> pd.DataFrame:
     device = torch.device("cuda" if args.device == "cuda" and torch.cuda.is_available() else "cpu")
-    data = load_anemia_data(args.data, seed=args.seed, clean_data=not args.no_cleaning, target=args.target)
+    data = load_anemia_baseline_split(
+        args.data,
+        seed=args.seed,
+        clean_data=not args.no_cleaning,
+        target=args.target,
+        test_size=args.test_size,
+        val_size=args.val_size,
+    )
     model, checkpoint = load_model(args.model, device)
     if checkpoint.get("feature_columns") != data.feature_columns:
         raise ValueError("The model feature columns do not match the current dataset.")
@@ -36,8 +43,10 @@ def threshold_sweep(args) -> pd.DataFrame:
         raise ValueError("The model target does not match the current --target setting.")
 
     train_scores, _, _ = anomaly_scores(model, data.train_x.to(device))
+    val_scores, _, _ = anomaly_scores(model, data.val_x.to(device))
     test_scores, _, _ = anomaly_scores(model, data.test_x.to(device))
     train_scores_np = train_scores.cpu().numpy()
+    val_scores_np = val_scores.cpu().numpy()
     test_scores_np = test_scores.cpu().numpy()
     y_true = data.test_y.astype(int)
 
@@ -47,13 +56,25 @@ def threshold_sweep(args) -> pd.DataFrame:
         threshold = np.quantile(train_scores_np, q / 100.0)
         rows.append(metric_row(f"train_p{q:g}", threshold, y_true, test_scores_np))
 
+    for method in ["validation_f1", "validation_recall_floor", "validation_youden"]:
+        threshold_info = validation_threshold(
+            method=method,
+            checkpoint_threshold=float(checkpoint["threshold"]),
+            train_scores=train_scores_np,
+            val_scores=val_scores_np,
+            val_y=data.val_y.astype(int),
+            min_recall=args.min_recall,
+            train_quantile=max(args.quantiles),
+        )
+        rows.append(metric_row(threshold_info["threshold_method"], threshold_info["threshold"], y_true, test_scores_np))
+
     candidate_thresholds = np.unique(test_scores_np)
-    f1_rows = [metric_row("f1_best", threshold, y_true, test_scores_np) for threshold in candidate_thresholds]
+    f1_rows = [metric_row("test_oracle_f1_best", threshold, y_true, test_scores_np) for threshold in candidate_thresholds]
     rows.append(max(f1_rows, key=lambda row: row["f1"]))
 
     fpr, tpr, roc_thresholds = roc_curve(y_true, test_scores_np)
     youden_index = int(np.argmax(tpr - fpr))
-    rows.append(metric_row("youden", roc_thresholds[youden_index], y_true, test_scores_np))
+    rows.append(metric_row("test_oracle_youden", roc_thresholds[youden_index], y_true, test_scores_np))
 
     table = pd.DataFrame(rows).sort_values(["f1", "recall"], ascending=False)
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -73,6 +94,9 @@ def parse_args():
     parser.add_argument("--device", choices=["cpu", "cuda"], default="cuda")
     parser.add_argument("--no-cleaning", action="store_true", help="Disable CBC value-range data cleaning.")
     parser.add_argument("--target", choices=["anemia", "abnormal"], default="anemia")
+    parser.add_argument("--min-recall", type=float, default=0.95)
+    parser.add_argument("--test-size", type=float, default=0.2)
+    parser.add_argument("--val-size", type=float, default=0.2)
     return parser.parse_args()
 
 

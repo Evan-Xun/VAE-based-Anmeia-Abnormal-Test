@@ -1,6 +1,7 @@
-"""Data quality checks for CBC tabular data."""
+"""Data quality checks and parsing helpers for CBC tabular data."""
 
-from typing import Dict, List, Tuple
+import re
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
@@ -23,11 +24,67 @@ CBC_VALUE_RANGES = {
     "PCT": (0.0, 2.0),
 }
 
+REPORT_FIELD_ALIASES = {
+    "WBC": "WBC",
+    "RBC": "RBC",
+    "HGB": "HGB",
+    "Hemoglobin": "HGB",
+    "HCT": "HCT",
+    "MCV": "MCV",
+    "MCH": "MCH",
+    "MCHC": "MCHC",
+    "PLT": "PLT",
+    "MPV": "MPV",
+    "RDW---CV": "RDW_CV",
+    "%RDW---CV": "RDW_CV",
+    "Neut": "NEUT_PCT",
+    "%Neut": "NEUT_PCT",
+    "Neutrophil": "NEUT_PCT",
+    "LYMP": "LYMP_PCT",
+    "%LYMP": "LYMP_PCT",
+    "Lymphocyte": "LYMP_PCT",
+    "MONO": "MONO_PCT",
+    "%MONO": "MONO_PCT",
+    "Monocyte": "MONO_PCT",
+    "EOS": "EOS_PCT",
+    "%EOS": "EOS_PCT",
+    "Eosinophil": "EOS_PCT",
+    "BASO": "BASO_PCT",
+    "%BASO": "BASO_PCT",
+    "Basophil": "BASO_PCT",
+    "#NEUT": "NEUT_ABS",
+    "#LYMP": "LYMP_ABS",
+    "#MONO": "MONO_ABS",
+    "#EOS": "EOS_ABS",
+    "#BASO": "BASO_ABS",
+}
+
+REPORT_CORE_FEATURE_COLUMNS = ["WBC", "RBC", "HGB", "HCT", "MCV", "MCH", "MCHC", "PLT"]
+NUMERIC_PATTERN = re.compile(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?")
+
+
+def canonical_report_field(raw_name: str) -> Optional[str]:
+    """Return the canonical field name for a raw CBC report line."""
+    return REPORT_FIELD_ALIASES.get(raw_name.strip())
+
+
+def parse_report_value(raw_value: str) -> Optional[float]:
+    """Extract the leading numeric value from a CBC report cell."""
+    text = raw_value.replace("*", " ").replace("−", "-").strip()
+    match = NUMERIC_PATTERN.search(text)
+    if match is None:
+        return None
+    try:
+        return float(match.group(0))
+    except ValueError:
+        return None
+
 
 def clean_cbc_dataframe(
     df: pd.DataFrame,
     feature_columns: List[str],
     label_column: str,
+    drop_duplicates: bool = True,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Drop duplicate rows plus missing, non-numeric, or implausible CBC values."""
     cleaned = df[feature_columns + [label_column]].copy()
@@ -64,9 +121,11 @@ def clean_cbc_dataframe(
     missing_or_non_numeric = cleaned[required_columns].isna().any(axis=1)
     drop_mask = missing_or_non_numeric | out_of_range_any
     cleaned = cleaned.loc[~drop_mask].copy()
-    duplicate_mask = cleaned.duplicated(subset=required_columns, keep="first")
-    duplicate_rows = int(duplicate_mask.sum())
-    cleaned = cleaned.loc[~duplicate_mask].copy()
+    duplicate_rows = 0
+    if drop_duplicates:
+        duplicate_mask = cleaned.duplicated(subset=required_columns, keep="first")
+        duplicate_rows = int(duplicate_mask.sum())
+        cleaned = cleaned.loc[~duplicate_mask].copy()
 
     summary_rows = [
         {"column": "__summary__", "metric": "original_rows", "value": len(df)},
